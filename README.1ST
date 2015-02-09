@@ -1,0 +1,37 @@
+Playmidi 2.5 Copyright (C)1995, 1996 Nathan Laredo
+Please see the file COPYING for terms and conditions.
+-------------------------------------------------------------------------
+ABOUT PLAYMIDI:
+
+Playmidi is a midi file player that will playback to FM, GUS,
+and external MIDI.  It also supports Creative Music Files (CMF) and
+Microsoft RIFF (RMI) files and large midi archives from games such
+as Ultima 7.
+
+INSTALLATION INSTRUCTIONS:
+
+To install playmidi, just "make install"
+make install will automatically configure playmidi based on your
+answers to a few simple questions.
+
+NOTE: the Makefile is optimized for a recent RedHat setup.  If you
+have an old or poorly installed ncurses, you might have to make
+some changes to compile.  X11R6 is reqired for xplaymidi.  If there
+is an object you don't care to make,  or can't make, see the makefile
+for additional installation options.
+
+If you're having trouble with playmidi, please feel free to send email.
+If you've discovered any bugs, feel free to email your bug fixes.
+
+USAGE:
+
+[x]playmidi [options] file1.mid [file2.mid ...]
+
+There are a lot of command line options to change things like which
+device to playback to and what channels to play with what patch, etc.
+There are also compile-in options you will find in "playmidi.h"
+
+Enjoy...
+
+Nathan I Laredo
+Lackland AFB, Texas, USA.  laredo@gnu.org
