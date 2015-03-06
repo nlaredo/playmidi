@@ -1,159 +1,41 @@
-###########################################################################
-# playmidi Makefile  12 September 1996
-#
-# by Nathan I Laredo, laredo@gnu.ai.mit.edu
-#
-# I don't wish to assert any rights (copyright) for this Makefile.
-# This Makefile is specially designed for using "make install"
-# thousands of times (for developing), and will only install updated
-# files.  It does not write over exiting fm patch libs if you have them.
-#
-###########################################################################
+ifeq ($(shell uname -s),Darwin)
+ INCLUDES = -I/Library/Frameworks/SDL2.framework/Headers -F/Library/Frameworks
+ SDL =  -F/Library/Frameworks -framework SDL2
+ MIDIDEP = coremidi.o
+ MIDILIB = -framework CoreMIDI -framework CoreFoundation
+else
+ INCLUDES = $(shell sdl2-config --cflags)
+ SDL = $(shell sdl2-config --libs)
+ MIDIDEP = alsamidi.o
+ MIDILIB = -lasound
+endif
+CFLAGS = -O2 -Wall -Wno-multichar -g $(INCLUDES)
+TFLAGS = -DTEST_TARGET
+LDFLAGS = -lm -lncurses $(SDL) $(MIDILIB)
+CC = gcc
 
-# ncurses usually /usr/lib, -L/usr/local/lib doesn't hurt
-# unless there's more than one ncurses floating around on your system
-LIBNC	= -L/usr/local/lib -lncurses
+PROG = playmidi
 
-######### NOTE:  X11R6 or newer REQUIRED
-LIBX11	= -L/usr/X11R6/lib -lXaw -lXmu -lXt -lX11 -lXext -lSM -lICE
-LIBGTK	= -L/usr/X11R6/lib -lgtk-1.1 -lgdk-1.1 -lglib-1.1 -lX11 -lXext -lm
-LIBVGA	= -L/usr/local/lib -lvgagl -lvga
+DEPS = playmidi.o
+DEPS += loadsf2.o
+DEPS += emumidi.o
+DEPS += playmidi.o
+DEPS += readmidi.o
+DEPS += playevents.o
+DEPS += io_ncurses.o
+DEPS += $(MIDIDEP)
 
-# ncurses is usually in /usr/include/ncurses, but you may need
-# to use /usr/local/include/ncurses depending on your setup.
-INCNC	= -I/usr/include/ncurses
+TESTS = loadsf2-test patchdump-test
 
-# just in case you keep your X includes in an odd location.
-INCX11	= -I/usr/X11R6/include -DNARROWPROTO
+all: $(PROG) $(TESTS)
 
-# stuff for sound blaster awe32
-INCAWE  = -DVOXWARE_CONTROLLER_7_WORKING
-# awe_voice.h path
-INCAWE  += -I/usr/lib/oss/include/sys
+#emumidi-test: loadsf2.o
 
-# usually in /usr/include, but -I/usr/local/include doesn't hurt
-# unless there's more than one svgalib floating around your system.
-INCVGA	= -I/usr/local/include
+%-test: %.c
+	$(CC) $(TFLAGS) $(CFLAGS) $^ -o $@ $(LDFLAGS) 
 
-# Directory where application defaults files are stored for X11 version
-XAPPDEFAULTS = /usr/X11R6/lib/X11/app-defaults
-
-INCLUDES= $(INCNC) $(INCX11) $(INCVGA) $(INCAWE)
-INSTALLDIR = /usr/bin
-INSTALL = install -s
-
-# if you are using the GUS Ultra driver module, add -DULTRA_DRIVER
-CFLAGS	= -Wall -pipe -fomit-frame-pointer -O2 -m486 $(INCAWE)
-LDFLAGS =
-
-OBJECTS = playmidi.o readmidi.o playevents.o \
-	  patchload.o emumidi.o io_ncurses.o
-
-XOBJECTS= playmidi.o readmidi.o playevents.o \
-	  patchload.o emumidi.o io_xaw.o
-
-SOBJECTS= playmidi.o readmidi.o playevents.o \
-	  patchload.o emumidi.o io_svgalib.o
-
-GOBJECTS= playmidi.o readmidi.o playevents.o \
-	  patchload.o emumidi.o io_gtk.o
-
-all: playmidi xplaymidi 
-
-config:
-playmidi.h: playmidi.h-dist
-	./Configure
-
-io_ncurses.o: io_ncurses.c
-	$(CC) $(CFLAGS) $(INCNC) -c io_ncurses.c -o io_ncurses.o
-
-io_xaw.o: io_xaw.c
-	$(CC) $(CFLAGS) $(INCX11) -c io_xaw.c -o io_xaw.o
-
-io_svgalib.o: io_svgalib.c
-	$(CC) $(CFLAGS) $(INCVGA) -c io_svgalib.c -o io_svgalib.o
-
-playmidi: .depend $(OBJECTS)
-	$(CC) $(LDFLAGS) -o playmidi $(OBJECTS) $(LIBNC)
-
-xplaymidi: .depend $(XOBJECTS)
-	$(CC) $(LDFLAGS) -o xplaymidi $(XOBJECTS) $(LIBX11)
-
-gtkplaymidi: .depend $(GOBJECTS)
-	$(CC) $(LDFLAGS) -o gtkplaymidi $(GOBJECTS) $(LIBGTK)
-
-splaymidi: .depend $(SOBJECTS)
-	$(CC) $(LDFLAGS) -o splaymidi $(SOBJECTS) $(LIBVGA)
-
-$(INSTALLDIR)/playmidi: playmidi
-	$(INSTALL) playmidi $(INSTALLDIR)
-
-$(INSTALLDIR)/xplaymidi: xplaymidi
-	$(INSTALL) xplaymidi $(INSTALLDIR)
-
-$(INSTALLDIR)/gtkplaymidi: gtkplaymidi
-	$(INSTALL) gtkplaymidi $(INSTALLDIR)
-
-$(INSTALLDIR)/splaymidi: splaymidi
-	$(INSTALL) splaymidi $(INSTALLDIR)
-
-/etc/std.o3:
-	cp -i std.o3 /etc
-
-/etc/drums.o3:
-	cp -i drums.o3 /etc
-
-/etc/std.sb:
-	cp -i std.sb /etc
-
-/etc/drums.sb:
-	cp -i drums.sb /etc
-
-$(XAPPDEFAULTS)/XPlaymidi:
-	cp -i XPlaymidi.ad $(XAPPDEFAULTS)/XPlaymidi
-
-install: $(INSTALLDIR)/playmidi $(INSTALLDIR)/splaymidi \
-	 $(INSTALLDIR)/xplaymidi /etc/std.o3 /etc/drums.o3 \
-	 /etc/std.sb /etc/drums.sb $(XAPPDEFAULTS)/XPlaymidi
-
-install.novga: $(INSTALLDIR)/playmidi \
-	 $(INSTALLDIR)/xplaymidi /etc/std.o3 /etc/drums.o3 \
-	 /etc/std.sb /etc/drums.sb $(XAPPDEFAULTS)/XPlaymidi
-
-install.noX11: $(INSTALLDIR)/playmidi $(INSTALLDIR)/splaymidi \
-	 /etc/std.o3 /etc/drums.o3 /etc/std.sb /etc/drums.sb
-
-install.Xonly: $(INSTALLDIR)/xplaymidi /etc/std.o3 /etc/drums.o3 \
-	 /etc/std.sb /etc/drums.sb $(XAPPDEFAULTS)/XPlaymidi
-
-install.lame: $(INSTALLDIR)/playmidi \
-	 /etc/std.o3 /etc/drums.o3 /etc/std.sb /etc/drums.sb
-
-install.man:
-	 cp playmidi.1 /usr/man/man1/
+$(PROG): $(DEPS)
+	$(CC) $^ -o $@ $(CFLAGS) $(LDFLAGS)
 
 clean:
-	rm -f *.o playmidi splaymidi xplaymidi a.out toy seq2mid beat
-
-distclean: clean
-	rm -f .depend  *~ *.bak playmidi.h config.sed
-
-
-ifeq (.depend, $(wildcard .depend))
-.depend depend dep: playmidi.h
-	for i in *.c; do $(CPP) -M $(CFLAGS) $(INCLUDES) $$i; done >.depend
-
-include .depend
-else
-depend dep:
-	for i in *.c; do $(CPP) -M $(CFLAGS) $(INCLUDES) $$i; done >.depend
-
-.depend: playmidi.h
-	@echo
-	@echo "Bad or missing .depend running 'make depend clean'"
-	@echo
-	$(MAKE) depend clean
-	@echo
-	@echo "Successful.  Trying to make again"
-	@exit 0
-endif
+	rm -f $(PROG) $(TESTS) $(DEPS)

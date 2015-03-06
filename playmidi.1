@@ -1,23 +1,25 @@
-.Dd 1 August 1994 (Modified 22 February 1996)
+.Dd 1 August 1994 (Modified 5 March 2015)
 .Dt PLAYMIDI 1
-.Os "Linux 1.3.60+"
+.Os "Linux, OSX"
 .Sh NAME
-.Nm playmidi, xplaymidi, splaymidi
+.Nm playmidi
 .Nd midi file player
 .Sh SYNOPSIS
-.Nm [s|x]playmidi
-.Op Fl 8cCdeEfF4gGiImoprRtvVz
+.Nm playmidi
+.Op Fl vblicxpVtdPeDhEzMIRCr
 .Op Ar
 .Sh DESCRIPTION
 .Nm playmidi
-is a full-featured midi file player for Linux systems or
-others using the Voxware 3.5 sound driver or newer.
-It can play back midi files on general midi devices or
-FM or Gravis Ultrasound.  If no files are specified,
+is a full-featured midi file player for all systems using
+sdl2.0 and later for soft synth rendering (using sf2 or math
+if no sf2 file found or specified) and supports external midi output
+on both Linux (via ALSA) and OSX (via CoreMidi) with more
+platforms (including Windows, iOS, Android) in a future release.
+When no options are specified,
 .Nm playmidi
 will give a summary of all command line options.
-If more than one file is specified, you can use xplaymidi or
-splaymidi or -r mode for interactive control, allowing
+If more than one file is specified, you can use 
+-r mode for interactive control, allowing
 you to skip to the previous song, next song, speed up
 or slow down the midi file, or repeat a midi file while viewing
 a real-time display of data in the midi file.
@@ -25,12 +27,6 @@ a real-time display of data in the midi file.
 Command line options are described below.
 (make sure to precede them with a dash (``-''))
 .Bl -hang -width 8
-.It Fl 8
-
-force the use of 8-bit patches with the gravis ultrasound
-to conserve memory.   Patches are automatically reloaded as
-8-bit when memory runs out, but if you know in advance, you can
-save a step and speed up the loading process.
 .It Fl c#
 
 set the channel mask (in hexidecimal) of which channels to
@@ -38,61 +34,37 @@ play from the midi file.   This is useful if you have a midi file
 with some channels that don't sound very good on your hardware.
 .It Fl d
 
-ignore any drum (percussion) tracks in a midi file. (See also
-.Fl m#
-).  This is useful for FM or any other hardware where percussion
+ignore any drum (percussion) tracks in a midi file.
+This is useful for non-sf2 soft synth or hardware where percussion
 sounds especially bad.  Also useful for midi files where the 
 percussion is poorly written.
 .It Fl e
 
 send output to external midi.   This is what you'll want to do
-if you have any midi hardware connected to your system.  This
-option is the default for playmidi as distributed.
-.It Fl f
-
-send output to fm synth using fm patches.  You'll need to use
-this option to playback on any non-midi soundcard with the 
-exception of the gravis ultrasound.
-.It Fl 4
-
-send output to fm synth using 4-op OPL/3 patches (BROKEN!)
-Don't use this option since it doesn't work yet.
-.It Fl g
-
-send output to Gravis Ultrasound.  If you have a gravis ultrasound
-without anything connected to the midi port, this option is for you.
+if you have any midi hardware connected to your system.  The
+software synth is the default when this is not specified.
 .It Fl E#
 
 set mask of channels to always output to external midi.   If you want
 to use more than one playback device, this option allows you to specify
 what channels to send to the external midi port.  For example,
-00FF would send channels 1 - 8  to external midi.
-.It Fl F#
+00FF would send channels 1 - 8  to external midi.  Channels not specified
+in this mask will be sent to the software synth (using sf2 if available,
+see -b option).
+.It Fl b
+filename
 
-set mask of channels to always output to fm.  Used as above.
-.It Fl G#
+set filename of the sf2 file to use for soft synth renderer.
+.It Fl D#
 
-set mask of channels to always output to gus.  Used as above.
-.It Fl i#
-
-set the channel mask (in hexidecimal) of which channels to
-ignore from the midi file.   This option is good for midi files
-with a few channels you don't want to listen to.
-.It Fl m#
-
-set the channel mask (in hexidecimal) of which channels to
-consider percussion channels.  See also
-.Fl d
-
-This option is good for midi files that don't conform to the 
-default percussion arrangement of playmidi.  GM standard specifies
-percussion in channel 10 only.   Some files disobey that requiring
-this setting.
-.It Fl o#
-
-forces output to a given synth number (0-4).  This option is old
-and obsolete.  Don't use it.  It's probably been removed by the
-time you read this.
+select the external device number to ouput to for 
+.Fl e
+or
+.Fl E
+options.
+You can use the 
+.Fl l
+option to get a list of available devices.
 .It Fl p[chan,]prog[,chan,prog...]
 
 forces a given program number (1-128) to be used for all output
@@ -105,15 +77,6 @@ sets just channel 5 to program 124, and
 .Fl p1,33,2,55,9,22,10,17
 sets channel 1 to program 33, channel 2 to program 55, channel 9
 to program 22, and channel 10 (percussive) to use the Power Drum Set.
-If you're using a Waveblaster, you'll want to use
-.Fl p10,129
-to set channel 10 to playback percussion.  You should quote arguments to 
-.Fl p
-if you want to include whitespace between them.
-.It Fl I
-
-shows a list general midi programs and numbers.   This is intended to
-make it easier to use the above option.
 .It Fl t#
 
 skews tempo by a factor (float).   This is good for files you think
@@ -122,17 +85,13 @@ to lots of files at high-speeds, or play a file at slow speeds in order
 to learn to play a song on some instrument (like piano).
 .It Fl r
 
-real time ansi (25-line) playback graphics tracking of all
+real time ncurses terminal playback graphics tracking of all
 notes on each channel and the current playback clock.
-This flag is assumed when using xplaymidi or splaymidi.
-.It Fl P#
+.It Fl Px,[x]
 
-remap all percussion channels to play on given channel.  This
+treat channel x as percussion in soft renderer.  This
 is useful if you have a file with percussion on multiple midi
-channels and your midi hardware only supports percussion on
-one channel.  For example
-.Fl P10
-would send all percussion channels to channel 10.
+channels and support for the required sysex to set it up is missing.
 .It Fl R#
 
 set initial reverb level.  Valid range is 0 - 127.
@@ -156,22 +115,34 @@ load from the midi file.
 
 zero channel data in output stream -- for special applications.
 .Sh AUTHOR
-Nathan Laredo (laredo@gnu.ai.mit.edu)
+Nathan Laredo (laredo@gnu.org)
 .Sh HISTORY
 .Nm playmidi
 was originally designed out of impatience with other midi
-players.  The startup time is negligable on all devices
-except gravis ultrasound (must wait for patches to load).
+players.  The startup time on modern hardware is effectively instant.
 The meaning of the various real-time displays is yet-to-be-documented.
 
-Playmidi 2.x is nearly a total re-write compared with the original 1.1
-release.
+Playmidi 2.9+ is nearly a total re-write compared with the 1995 playmidi
+2.5 release.
 .Sh BUGS
-splaymidi doesn't properly restore terminal mode on exit; you may
-want to use ";stty sane" at the end of any splaymidi command.
-GUS playback quality will improve as kernel driver improves.
-A lot of new features of playmidi are as of yet undocumented.
-4-op FM playback doesn't work.  Some incomplete or corrupted
-midi files may cause unpredictable results or seg faults.
-No other known bugs.  If you want new features or find undocumented
-ones (bugs), please email laredo@gnu.ai.mit.edu.
+Currently, playmidi without the 
+.Fl r
+option is not supported properly. Please always use this option if you
+want to hear playback.
+
+Portamento is not yet implemented in the software synth.
+
+Some sf2 files will render poorly in the software renderer.  It is
+highly recommended you search for the file Scc1t2.sf2 via Google and
+use that file with playmidi for software rendering as that was the
+one used during development and works the best (and so far gives the
+best soft synth experience).
+
+This is currently
+a work in progress after almost 20 years without a release, and expect
+more features to come as the 3.0 release approaches.  Older features
+like OPL3 FM synth and Gravis Ultrasound and AWE32 support have been
+dropped in favor of the soft synth.  Ultimately, there may be soft FM
+playback as well for nostalgia purposes.
+If you want new features or find undocumented
+ones (bugs), please email laredo@gnu.org.

@@ -14,18 +14,37 @@
    Kelly Drive, Lackland AFB, TX 78236-5128, USA.
  *************************************************************************/
 #include "playmidi.h"
-#ifdef linux
-#include <ncurses/curses.h>
-#else
 #include <ncurses.h>
-#endif
 #include "gsvoices.h"
 #include <sys/time.h>
 #include <unistd.h>
 
-char *metatype[7] =
-{"Text", "Copyright Notice", "Sequence/Track name",
- "Instrument Name", "Lyric", "Marker", "Cue Point"};
+struct meta_event_names {
+  int t;
+  char *name;
+  /* todo, add function pointer for handling */
+};
+
+struct meta_event_names metatype[] = {
+  { SEQUENCE_NUMBER, "Sequence Number" },
+  { TEXT_EVENT, "Text" },
+  { COPYRIGHT_NOTICE, "Copyright Notice" },
+  { SEQUENCE_NAME, "Sequence/Track Name" },
+  { INSTRUMENT_NAME, "Instrument Name" },
+  { LYRIC, "Lyric" },
+  { MARKER, "Marker" },
+  { CUE_POINT, "Cue Point" },
+  { PROGRAM_NAME, "Program Name" },
+  { DEVICE_NAME, "Device Name" },
+  { CHANNEL_PREFIX, "Channel Prefix" },
+  { END_OF_TRACK, "End of Track" },
+  { SET_TEMPO, "Tempo" },
+  { SMPTE_OFFSET, "SMPTE Offset" },
+  { TIME_SIGNATURE, "Time Signature" },
+  { KEY_SIGNATURE, "Key Signature" },
+  { SEQUENCER_SPECIFIC, "Sequencer Specific" },
+  { META_EVENT, NULL } /* end of list */
+};
 
 char *sharps[12] =		/* for a sharp key */
 {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "B#", "B"};
@@ -44,22 +63,10 @@ char *minsharp[15] =		/* name of minor key with 'x' sharps */
 {"A", "E", "B", "F#", "C#", "G#", "D#", "A#", "E#", "B#", "F##",
  "C##", "G##", "D##", "A##"};	/* only first 8 defined by file format */
 
-char *drumset[11] =
-{
- "STANDARD    ", "ROOM        ", "POWER       ", "ELECTRONIC  ",
- "TR-808/909  ", "JAZZ        ", "BRUSH       ", "ORCHESTRA   ",
- "SFX         ", "User Program", "CM-64/32L   "
-};
-
-#define SET(x) (x == 8 ? 1 : x >= 16 && x <= 23 ? 2 : x == 24 ? 3 : \
-		x == 25  ? 4 : x == 32 ? 5 : x >= 40 && x <= 47 ? 6 : \
-		x == 48 ? 7 : x == 56 ? 8 : x >= 96 && x <= 111 ? 9 : \
-		x == 127 ? 10 : 0)
-
 extern int graphics, verbose, perc;
 extern int format, ntrks, division;
-extern unsigned long int ticks;
-extern char *filename, *gmvoice[256];
+extern Uint32 ticks;
+extern char *filename;
 extern float skew;
 extern void seq_reset();
 extern struct timeval start_time;
@@ -79,14 +86,38 @@ int error;
     exit(error);
 }
 
-#define CHN		(cmd & 0xf)
 #define NOTE		((int)data[0])
 #define VEL		((int)data[1])
 #define OCTAVE		(NOTE / 12)
 #define OCHAR		(0x30 + OCTAVE)
 #define XPOS		(14 + ((NOTE/2) % ((COLS - 16) / 4)) * 4)
-#define YPOS		(CHN + 2)
+#define PXPOS		(14 + ((NOTE) % ((COLS - 16) / 9)) * 9)
+#define YPOS		(CHN(cmd) + 2)
 #define NNAME		nn[NOTE % 12]
+
+extern struct chanstate channel[16];  // presently active channel state
+
+static char *gsfind(int pgm, int ch, int key)
+{
+  int i, bank;
+  char *rv = NULL;
+  struct gsvoices *gs = key ? gs_drum : ISPERC(ch) ? gs_perc : gs_inst;
+  bank = channel[ch].controller[CTL_BANK_SELECT];
+  bank <<= 7;
+  bank |= channel[ch].controller[CTL_BANK_SELECT + CTL_LSB];
+  if (key != 0) {
+    pgm = channel[ch].program;
+  }
+  for (i = 0; gs[i].name != NULL; i++) {
+    if (gs[i].pgm <= pgm) {
+      rv = gs[i].name;
+      if (gs[i].pgm == pgm && gs[i].bank == bank && gs[i].key == key) {
+        return gs[i].name;
+      }
+    }
+  }
+  return rv;
+}
 
 int cdeltat(t1, t2)
 struct timeval *t1;
@@ -104,8 +135,8 @@ int updatestatus()
 {
     int ch, d1, d2;
 
-    want_time.tv_sec = start_time.tv_sec + (ticks / 100);
-    want_time.tv_usec = start_time.tv_usec + (ticks % 100) * 10000;
+    want_time.tv_sec = start_time.tv_sec + (ticks / 1000);
+    want_time.tv_usec = start_time.tv_usec + (ticks % 1000) * 1000;
     if (want_time.tv_usec > 1000000)
 	(want_time.tv_usec -= 1000000, want_time.tv_sec++);
 
@@ -151,9 +182,9 @@ int updatestatus()
 	mvprintw(1, 0, "%02d:%02d.%d", d1 / 60, d1 % 60, d2 / 100000);
 	refresh();
 	d1 = cdeltat(&want_time, &now_time);
-	if (d1 > 15)
+	if (0 && d1 > 10)
 	    usleep(100000);
-    } while (d1 > 10);
+    } while (1 && d1 > 30);
     return NO_EXIT;
 }
 
@@ -162,24 +193,30 @@ int cmd;
 unsigned char *data;
 int length;
 {
-    if (cmd < 8 && cmd > 0) {
-	if (length > COLS)
+    if (cmd < CHANNEL_PREFIX) {
+        int t;
+        for (t = 0; metatype[t].name; t++) {
+          if (metatype[t].t == cmd) {
+            break;
+          }
+        }
+	if (graphics && length > COLS)
 	    length = COLS;
-	if (cmd != 1 && strncmp(textbuf, data, length - 1) == 0)
+	if (cmd != 1 && strncmp(textbuf, (char *)data, length - 1) == 0)
 	     return;	/* ignore repeat messages, "WinJammer Demo" etc. */
 	if (verbose) {
-	    printf("%s: ", metatype[cmd - 1]);
-	    for (i = 0; i < length; i++)
-		putchar(data[i]);
-	    putchar('\n');
+	    printf("%s: %.*s\n", metatype[t].name, length, (char *)data);
 	} else {
 	    attrset(A_BOLD | COLOR_PAIR(cmd));
 	    if (!karaoke || *data == '\\' || *data == '/' || 
 		(*data >= '@' && *data <= 'Z') || *data == '(' ||
 		karaoke + length > COLS || (cmd != 1 && karaoke)) {
 		karaoke = 0;
-		if ((++ytxt) > LINES - 1)
-		    ytxt = 19;
+		if ((++ytxt) > LINES - 1) {
+                  move(19, 0);
+                  deleteln();
+		  ytxt = LINES - 1;
+                }
 		move(ytxt, 0);
 		clrtoeol();
 		if (*data == '\\' || *data == '/')
@@ -187,7 +224,7 @@ int length;
 		if (*data == '@')	/* karaoke info */
 		    (data += 2, length -= 2);
 	    }
-	    strncpy(textbuf, data, length < COLS - karaoke ? length :
+	    strncpy(textbuf, (char *)data, length < COLS - karaoke ? length :
 		    COLS - karaoke);
 	    if (length < 1024)
 		textbuf[length] = 0;
@@ -199,7 +236,7 @@ int length;
 	    } else
 		karaoke = 0;
 	}
-    } else if (cmd == key_signature) {
+    } else if (cmd == KEY_SIGNATURE) {
 	if (graphics || verbose)
 	    nn = ((NOTE & 0x80) ? flats : sharps);
 	if (verbose) {
@@ -210,6 +247,22 @@ int length;
 		printf("Key: %s minor\n", (!(NOTE & 0x80) ?
 			minsharp[NOTE] : minflat[256-NOTE]));
 	}
+        if (graphics) {
+	    attrset(A_NORMAL);
+	    if (VEL)	/* major key */
+		mvprintw(18, 36, "%3s major", (!(NOTE & 0x80) ?
+			majsharp[NOTE] : majflat[256-NOTE]));
+	    else	/* minor key */
+		mvprintw(18, 36, "%3s minor", (!(NOTE & 0x80) ?
+			minsharp[NOTE] : minflat[256-NOTE]));
+        }
+    } else if (cmd == TIME_SIGNATURE) {
+        attrset(A_NORMAL);
+	mvprintw(18, 16, "%3d/%-3d", data[0], data[1]);
+    } else if (cmd == SET_TEMPO) {
+	int t = ((*(data) << 16) | (data[1] << 8) | data[2]);
+        attrset(A_NORMAL);
+	mvprintw(18, 24, "%3d BPM", 60000000/t);
     } else
 	switch (cmd & 0xf0) {
 	case MIDI_KEY_PRESSURE:
@@ -220,29 +273,39 @@ int length;
 	case MIDI_NOTEON:
 	    if (graphics)
 		if (VEL) {
-		    attrset(A_BOLD | COLOR_PAIR((CHN % 6 + 1)));
-		    if (!ISPERC(CHN) || NOTE > 127 ||
-			gmvoice[NOTE + 128] == NULL)
+		    attrset(A_BOLD | COLOR_PAIR((CHN(cmd) % 6 + 1)));
+		    if (!ISPERC(CHN(cmd)) || NOTE == 0)
 			mvprintw(YPOS, XPOS, "%s%c", NNAME, OCHAR);
 		    else
-			mvprintw(YPOS, XPOS, "%c%c%c",
-				 gmvoice[NOTE + 128][0],
-				 gmvoice[NOTE + 128][1],
-				 gmvoice[NOTE + 128][2]);
-		} else
+			mvprintw(YPOS, PXPOS, "%8.8s",
+                                 gsfind(0, CHN(cmd), NOTE));
+		} else {
+                  if (!ISPERC(CHN(cmd))) {
 		    mvaddstr(YPOS, XPOS, "   ");
+                  } else {
+		    mvaddstr(YPOS, PXPOS, "        ");
+                  }
+                }
 	    else if (verbose > 5)
 		printf("Chn %d Note On %s%c=%d\n",
 		       1 + (cmd & 0xf), NNAME, OCHAR, VEL);
 	    break;
 	case MIDI_NOTEOFF:
-	    if (graphics)
-		mvaddstr(YPOS, XPOS, "   ");
+	    if (graphics) {
+                  if (!ISPERC(CHN(cmd))) {
+		    mvaddstr(YPOS, XPOS, "   ");
+                  } else {
+		    mvaddstr(YPOS, PXPOS, "        ");
+                  }
+            }
 	    else if (verbose > 5)
 		printf("Chn %d Note Off %s%c=%d\n",
 		       1 + (cmd & 0xf), NNAME, OCHAR, VEL);
 	    break;
 	case MIDI_CTL_CHANGE:
+            if (0 && graphics) {  /* debug midi controller messages */
+		mvprintw(YPOS, PXPOS, "[%02x]=%02x", NOTE, VEL);
+            }
 	    if (verbose > 5)
 		printf("Chn %d Ctl Change %d=%d\n",
 		       1 + (cmd & 0xf), NOTE, VEL);
@@ -254,32 +317,28 @@ int length;
 	    break;
 	case MIDI_PITCH_BEND:
 	    {
-		register val = (VEL << 7) | NOTE;
+		int val = (VEL << 7) | NOTE;
 
 		if (graphics) {
 		    attrset(A_BOLD);
 		    if (val > 0x2000)
-			mvaddch(YPOS, 11, '>');
+			mvaddch(YPOS, 12, '>');
 		    else if (val < 0x2000)
-			mvaddch(YPOS, 11, '<');
+			mvaddch(YPOS, 12, '<');
 		    else
-			mvaddch(YPOS, 11, ' ');
+			mvaddch(YPOS, 12, ' ');
 		} else if (verbose > 4)
 		    printf("Chn %d Bender=0x%04x\n",
-			   1 + CHN, val);
+			   1 + CHN(cmd), val);
 	    }
 	    break;
 	case MIDI_PGM_CHANGE:
 	    if (graphics) {
-		attrset(COLOR_PAIR((CHN % 6 + 1)) | A_BOLD);
-		if (!ISPERC(CHN))
-		    mvaddnstr(YPOS, 0, gsvoice[NOTE], 12);
-		else
-		    mvaddstr(YPOS, 0, drumset[SET(NOTE)]);
+		attrset(COLOR_PAIR((CHN(cmd) % 6 + 1)) | A_BOLD);
+                mvprintw(YPOS, 0, "%12.12s", gsfind(NOTE, CHN(cmd), 0));
 	    } else if (verbose > 3)
-		printf("Chn %d Program=%s %d\n",
-		       1 + CHN, (ISPERC(CHN) ? drumset[SET(NOTE)]
-				 : gsvoice[NOTE]), NOTE + 1);
+		printf("Chn %d Program=%s %d\n", 1 + CHN(cmd),
+                       gsfind(NOTE, CHN(cmd), 0), NOTE + 1);
 	    break;
 	case 0xf0:
 	case 0xf7:
@@ -304,15 +363,15 @@ void init_show()
     karaoke = 0;
     if (graphics) {
 	clear();
-	attrset(A_NORMAL | A_ALTCHARSET);
+	attrset(A_NORMAL);
 	mvprintw(0, 0, RELEASE " by Nathan Laredo");
 	mvprintw(0, 40, "Now Playing:");
 	mvprintw(1, 40, "[P]ause [N]ext [L]ast [O]ptions");
-	mvaddstr(ytxt, 0, "ออออออออออออพ");
+	mvaddstr(ytxt, 0, "=-=-=-=-=-=-=-");
 	mvprintw(1, 0, "00:00.0 - 00:00.0, %d track%c", ntrks,
 		 ntrks > 1 ? 's' : ' ');
 	for (i = 0; i < 16; i++)
-	    mvprintw(i + 2, 0, "Channel %2d  ณ", i + 1);
+	    mvprintw(i + 2, 0, "Channel %2d   |", i + 1);
 	tmp = strrchr(filename, '/');
 	strncpy(textbuf, (tmp == NULL ? filename : tmp + 1), COLS - 53);
 	attrset(A_BOLD);
@@ -349,6 +408,5 @@ char **argv;
 	noecho();
 	nodelay(stdscr, TRUE);
 	keypad(stdscr, TRUE);
-	attrset(A_NORMAL);
     }
 }

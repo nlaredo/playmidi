@@ -1,11 +1,11 @@
 /************************************************************************
-   readmidi.c -- last change: 1 Jan 96
+   readmidi.c -- last change: 25 Jan 2015
 
-   Creates a linked list of each chunk in a midi file.
+   Creates an array of pointers to each chunk in a midi file.
    ENTIRE MIDI FILE IS RETAINED IN MEMORY so that no additional malloc
    calls need be made to store the data of the events in the midi file.
 
-   Copyright (C) 1995-1996 Nathan I. Laredo
+   Copyright 2015 Nathan I. Laredo
 
    This program is modifiable/redistributable under the terms
    of the GNU General Public Licence.
@@ -13,21 +13,12 @@
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-   Send your comments and all your spare pocket change to
-   laredo@gnu.ai.mit.edu (Nathan Laredo) or to PSC 1, BOX 709, 2401
-   Kelly Drive, Lackland AFB, TX 78236-5128, USA.
  *************************************************************************/
 #include "playmidi.h"
-#include <unistd.h>
+#include "SDL2/SDL.h"
 
 int format, ntrks, division;
 unsigned char *midifilebuf;
-
-/* the following few lines are needed for dealing with CMF files */
-int reloadfm = 0;
-extern void loadfm();
-extern int seqfd, sb_dev, wantopl3, play_fm, fmloaded[256];
-SEQ_USE_EXTBUF();
 
 extern struct miditrack seq[MAXTRKS];
 extern int find_header;
@@ -61,7 +52,7 @@ off_t filelength;
     midifilebuf = filebuf;
     /* allow user to specify header number in from large archive */
     while (i != find_header && midifilebuf < (filebuf + filelength - 32)) {
-	if (strncmp(midifilebuf, "MThd", 4) == 0) {
+	if (strncmp((char *)midifilebuf, "MThd", 4) == 0) {
 	    i++;
 	    midifilebuf += 4;
 	} else
@@ -94,28 +85,11 @@ off_t filelength;
 	seq[0].data = filebuf + tracklen;
 	seq[0].length = filelength - tracklen;
 	i = (unsigned long int) (*(short *) &midifilebuf[2]) - 4;
-	/* if fm playback is enabled, load all fm patches from file */
-	if (play_fm) {
-	    struct sbi_instrument instr;
-	    int j, k;
-	    reloadfm = midifilebuf[32]; /* number of custom patches */
-            instr.device = sb_dev;
-	    for (j = 0; j < 32; j++)
-		instr.operators[j] = 0x3f;
-	    instr.key = FM_PATCH;
-	    for (j = 0; j < reloadfm && j < 255; j++) {
-                instr.channel = j;
-		fmloaded[j] = instr.key;
-                for (k = 0; k < 16; k++)
-		    instr.operators[k] = midifilebuf[i + (16 * j) + k];
-		SEQ_WRPATCH(&instr, sizeof(instr));
-	    }
-	}
 	return ntrks;
     } else {
 	int found = 0;
 	while (!found && midifilebuf < (filebuf + filelength - 8))
-	    if (strncmp(midifilebuf, "MThd", 4) == 0)
+	    if (strncmp((char *)midifilebuf, "MThd", 4) == 0)
 		found++;
 	    else
 		midifilebuf++;
@@ -141,16 +115,12 @@ off_t filelength;
 	fprintf(stderr, "\nWARNING: %d TRACKS IGNORED!\n", ntrks - MAXTRKS);
 	ntrks = MAXTRKS;
     }
-    if (play_fm && reloadfm) {
-	loadfm();	/* if custom CMF patches loaded, replace */
-	reloadfm = 0;
-    }
     for (track = 0; track < ntrks; track++) {
 	if (Read32() != MTrk) {
 	    /* MTrk isn't where it's supposed to be, search rest of file */
 	    int fuzz, found = 0;
 	    midifilebuf -= 4;
-	    if (strncmp(midifilebuf, "MThd", 4) == 0)
+	    if (strncmp((char *)midifilebuf, "MThd", 4) == 0)
 		continue;
 	    else {
 		if (!track) {
@@ -161,7 +131,7 @@ off_t filelength;
 		midifilebuf -= seq[track - 1].length;
 		for (fuzz = 0; (fuzz + midifilebuf) <
 		     (filebuf + filelength - 8) && !found; fuzz++)
-		    if (strncmp(&midifilebuf[fuzz], "MTrk", 4) == 0)
+		    if (strncmp((char *)&midifilebuf[fuzz], "MTrk", 4) == 0)
 			found++;
 		seq[track - 1].length = fuzz;
 		midifilebuf += fuzz;
