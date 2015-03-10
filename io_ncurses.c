@@ -47,9 +47,9 @@ struct meta_event_names metatype[] = {
 };
 
 char *sharps[12] =		/* for a sharp key */
-{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "B#", "B"};
+{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 char *flats[12] =		/* for a flat key */
-{"C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Gb", "A", "Bb", "B"};
+{"C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"};
 char *majflat[15] =		/* name of major key with 'x' flats */
 {"C", "F", "Bb", "Eb", "Ab", "Db", "Gb", "Cb", "Fb", "Bbb", "Ebb",
  "Abb", "Gbb", "Cbb", "Fbb"};	/* only first 8 defined by file format */
@@ -68,7 +68,7 @@ extern int format, ntrks, division;
 extern Uint32 ticks;
 extern char *filename;
 extern float skew;
-extern void seq_reset();
+extern void seq_reset(int);
 extern struct timeval start_time;
 
 struct timeval now_time, want_time;
@@ -158,11 +158,12 @@ int updatestatus()
 		break;
 	    case KEY_PPAGE:
 	    case KEY_UP:
-		seq_reset();
+		seq_reset(1);
 		return (ch == KEY_UP ? 0 : -1);
 		break;
 	    case 18:
 	    case 12:
+            case KEY_RESIZE:
 		wrefresh(curscr);
 		break;
 	    case 'q':
@@ -237,15 +238,17 @@ int length;
 		karaoke = 0;
 	}
     } else if (cmd == KEY_SIGNATURE) {
+      Sint8 sf = data[1];
+      Sint8 mi = data[2];
 	if (graphics || verbose)
-	    nn = ((NOTE & 0x80) ? flats : sharps);
+	    nn = ((sf & 0x80) ? flats : sharps);
 	if (verbose) {
-	    if (VEL)	/* major key */
-		printf("Key: %s major\n", (!(NOTE & 0x80) ?
-			majsharp[NOTE] : majflat[256-NOTE]));
+	    if (mi == 0)	/* major key */
+		printf("Key: %s major\n", (!(sf & 0x80) ?
+			majsharp[sf & 0xf] : majflat[(-sf) & 0xf]));
 	    else	/* minor key */
-		printf("Key: %s minor\n", (!(NOTE & 0x80) ?
-			minsharp[NOTE] : minflat[256-NOTE]));
+		printf("Key: %s minor\n", (!(sf & 0x80) ?
+			minsharp[sf & 0xf] : minflat[(-sf) & 0xf]));
 	}
         if (graphics) {
 	    attrset(A_NORMAL);
@@ -258,7 +261,7 @@ int length;
         }
     } else if (cmd == TIME_SIGNATURE) {
         attrset(A_NORMAL);
-	mvprintw(18, 16, "%3d/%-3d", data[0], data[1]);
+	mvprintw(18, 16, "%3d/%-3d", data[0], 1<<(data[1]));
     } else if (cmd == SET_TEMPO) {
 	int t = ((*(data) << 16) | (data[1] << 8) | data[2]);
         attrset(A_NORMAL);

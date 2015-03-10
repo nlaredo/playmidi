@@ -20,7 +20,7 @@ extern void seq_stop_note(int, int, int);
 extern void seq_control(int, int, int);
 extern void seq_chn_pressure(int, int);
 extern void seq_bender(int, int, int);
-extern void seq_reset();
+extern void seq_reset(int);
 extern int graphics, verbose, division, ntrks, format;
 extern int perc;
 extern int play_ext, reverb, chorus, chanmask;
@@ -73,7 +73,7 @@ int playevents(void)
     int play_status, playing = 1;
 
     init_show();
-    seq_reset();
+    seq_reset(0);
     ticks = 0;
     start_tick = SDL_GetTicks();
     gettimeofday(&start_time, NULL);

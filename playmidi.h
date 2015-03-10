@@ -31,12 +31,18 @@ enum midi_controller_numbers {
   CTL_BALANCE           = 0x08,
   CTL_PAN               = 0x0a,  /* 0(l)-127(r), default=64 (not reset) */
   CTL_EXPRESSION        = 0x0b,  /* channel 0(0%) - 16384(100%, default) */
+  CTL_MOTIONAL_CTL1     = 0x0c,  /* roland integra 7, Part L-R param */
+  CTL_MOTIONAL_CTL2     = 0x0d,  /* roland integra 7, Part F-B param */
+  CTL_MOTIONAL_CTL3     = 0x0e,  /* roland integra 7, Part ambience level */
   CTL_GENERAL_PURPOSE1  = 0x10,
   CTL_TONE_MODIFY1      = 0x10,  /* roland name */
   CTL_GENERAL_PURPOSE2  = 0x11,
   CTL_TONE_MODIFY2      = 0x11,  /* roland name */
   CTL_GENERAL_PURPOSE3  = 0x12,
   CTL_GENERAL_PURPOSE4  = 0x13,
+  CTL_MOTIONAL_EXT1     = 0x1c,  /* roland integra 7, PartEx L-R param */
+  CTL_MOTIONAL_EXT2     = 0x1d,  /* roland integra 7, PartEx F-B param */
+  CTL_MOTIONAL_EXT3     = 0x1e,  /* roland integra 7, PartEx amb level */
   CTL_LSB               = 0x20,  /* above all have LSB at (CTL_* + CTL_LSB) */
   /* controllers #64 to #69 (0x40 to 0x45) are on/off switches. */
   CTL_DAMPER_PEDAL      = 0x40,  /* 0(default)-63 = off, 64 - 127 = on */
@@ -207,10 +213,11 @@ struct voicestate {
   float t;              // timebase for this note, math 0 - 2pi, or sample pos
   float pan;            // pan, 0.0(l) - 1.0(r), 0.5 = center
   int note;             // midi note number being played
+  int vel;              // velocity from midi note on event
   int channel;          // midi channel for this note 0-15
   int sustain;          // if note off is deferred by CTL_SUSTAIN, sustain=1
   int exclusive_class;  // if > 0, new notes terminate others of same ch+class
-  int samples;          // sample count to sustain this note (set at note off)
+  Uint64 endstamp;      // event end: sample position at note off plus release
   Uint64 timestamp;     // event start: global running sample count position
   struct voice_env env; // volume envelope, adsr timed in sample units
   struct sf2gen s;      // sf2 sample data, dwStart == dwEnd means no samples

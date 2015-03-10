@@ -25,12 +25,16 @@ extern int chanmask, perc, dochan, MT32;
 extern Uint32 ticks;
 extern int useprog[16];
 extern char *sf2_filename;
+extern void seq_reset(int);
+extern void load_sf2(char *);
+
 #define CHANNEL (dochan ? chn : 0)
 
 #define SAMPLELEN 512
 #define SAMPLERATE 96000
 #define PACKET_LIST_BYTES 65536
 #define POLYMAX 128
+#define NOTE_MAXLEN 0x7fffffff
 
 static float rate = SAMPLERATE;
 int channels = 2;
@@ -45,6 +49,7 @@ struct voicestate voice[POLYMAX];  // active voices, samples = 0 = inactive
 struct chanstate channel[16];  // presently active channel state
 Uint64 samplepos = 0;  // current position in the sample output
 float atune = 440.0;  // this will affect all midi note conversions
+static float scaletune[16][12];  // 16 channels of tuning adjust
 
 // convert a negative cB value to linear 0 - 1.0
 float cB_to_linear(float cB)
@@ -62,18 +67,19 @@ Uint8 freq_to_note(float freq)
   return (Uint8) d;
 }
 
-// convert a midi note number to floating point frequency
-float note_to_freq(Uint8 note, Uint16 centsperkey)
-{
-  float freq = pow(2, ((float)(note) - 69.0) *
-        (float) centsperkey / 1200.0) * atune;
-  return freq;
-}
-
 // convert a controller scaled cents value to frequency multiplier
 float cents_to_freqmult(float cents, Uint16 num, Uint16 den)
 {
   return pow(2, (float)num * (cents / 1200.0) / (float)den);
+}
+
+// convert a midi note number to floating point frequency
+float note_to_freq(Uint8 note, Uint16 centsperkey, int ch)
+{
+  float freq = pow(2, ((float)(note) - 69.0) *
+        (float) centsperkey / 1200.0) * atune;
+  freq *= scaletune[ch][note % 12];
+  return freq;
 }
 
 // convert a midi pitchbend to a frequency multiplier
@@ -96,23 +102,28 @@ void apply_generators(int min, int max, void *g, int j)
   static int coarseTune = 0, fineTune = 0, scaleTuning = 100;
   static int sOff = 0, eOff = 0, sLoopOff = 0, eLoopOff = 0;
   struct sfGenList *gen = g;
-  int p;
+  int p, preset_level = (g == sf2.pgen);
 
   for (p = min; p < max; p++) {
     switch (gen[p].sfGenOper) {
       case SFG_startAddrsOffset:
+        if (preset_level) break;  // not valid at this level
         sOff += gen[p].genAmount.shAmount;
         break;
       case SFG_endAddrsOffset:
+        if (preset_level) break;  // not valid at this level
         eOff += gen[p].genAmount.shAmount;
         break;
       case SFG_startloopAddrsOffset:
+        if (preset_level) break;  // not valid at this level
         sLoopOff += gen[p].genAmount.shAmount;
         break;
       case SFG_endloopAddrsOffset:
+        if (preset_level) break;  // not valid at this level
         eLoopOff += gen[p].genAmount.shAmount;
         break;
       case SFG_startAddrsCoarseOffset:
+        if (preset_level) break;  // not valid at this level
         sOff += gen[p].genAmount.shAmount * 32768;
         break;
       case SFG_modLfoToPitch:
@@ -215,6 +226,7 @@ void apply_generators(int min, int max, void *g, int j)
         sLoopOff += gen[p].genAmount.shAmount * 32768;
         break;
       case SFG_keynum:
+        if (preset_level) break;  // not valid at this level
         voice[j].note = gen[p].genAmount.wAmount;
         break;
       case SFG_velocity:
@@ -227,6 +239,7 @@ void apply_generators(int min, int max, void *g, int j)
         voice[j].v *= cB_to_linear(0 - (float)gen[p].genAmount.wAmount);
         break;
       case SFG_endloopAddrsCoarseOffset:
+        if (preset_level) break;  // not valid at this level
         eLoopOff += gen[p].genAmount.shAmount * 32768;
         break;
       case SFG_coarseTune:
@@ -236,15 +249,18 @@ void apply_generators(int min, int max, void *g, int j)
         fineTune = gen[p].genAmount.shAmount;
         break;
       case SFG_sampleModes:
+        if (preset_level) break;  // not valid at this level
         voice[j].s.sampleModes = gen[p].genAmount.wAmount;
         break;
       case SFG_scaleTuning:
         scaleTuning = gen[p].genAmount.wAmount;
         break;
       case SFG_exclusiveClass:
+        if (preset_level) break;  // not valid at this level
         voice[j].exclusive_class = gen[p].genAmount.wAmount;
         break;
       case SFG_overridingRootKey:
+        if (preset_level) break;  // not valid at this level
         newnote = gen[p].genAmount.shAmount;
         break;
       default:
@@ -253,23 +269,24 @@ void apply_generators(int min, int max, void *g, int j)
   }
   if (voice[j].shdr >= 0) {
     int s = voice[j].shdr;
+    int ch = voice[j].channel;
     // finalize application of generator values
     voice[j].s.dwStart = sf2.shdr[s].dwStart + sOff;
     voice[j].s.dwEnd = sf2.shdr[s].dwEnd + eOff;
     voice[j].s.dwStartloop = sf2.shdr[s].dwStartloop + sLoopOff;
     voice[j].s.dwEndloop = sf2.shdr[s].dwEndloop + eLoopOff;
-    voice[j].f = note_to_freq(voice[j].note, scaleTuning);
+    voice[j].f = note_to_freq(voice[j].note, scaleTuning, ch);
     voice[j].r = voice[j].f / note_to_freq(newnote < 0 ?
-        sf2.shdr[s].byOriginalKey : newnote, scaleTuning) *
+        sf2.shdr[s].byOriginalKey : newnote, scaleTuning, ch) *
         ((float)sf2.shdr[s].dwSampleRate / rate);
     voice[j].r *= cents_to_freqmult(coarseTune * 100.0, 1, 1);
     voice[j].r *= cents_to_freqmult(fineTune, 1, 1);
     voice[j].r *= cents_to_freqmult(sf2.shdr[s].chCorrection, 1, 1);
     if (voice[j].exclusive_class) {
       for (s = 0; s < POLYMAX; s++) {
-        if (s != j && voice[s].channel == voice[j].channel &&
+        if (s != j && voice[s].channel == ch &&
             voice[s].exclusive_class == voice[j].exclusive_class) {
-          voice[s].samples = 0;  // terminate voice
+          voice[j].endstamp = samplepos + voice[j].env.r;
         }
       }
     }
@@ -323,6 +340,8 @@ void fill_audio(void *udata, Uint8 *stream, int len)
   static float rlfo = 0.0;
   float left, right, lfo;
   int i, j, ch, pgm, voices;
+  int nindex_max = len;  /* index of sample with the maximum value in window */
+  static float max_val = 0.0;  /* actual max sample value in window */
   static float normalize = 1.0;
   float *f32s = (float *)stream;
   len >>= 3; // convert from bytes to samples
@@ -345,18 +364,16 @@ void fill_audio(void *udata, Uint8 *stream, int len)
       switch (cmd & 0xf0) {
         case MIDI_NOTEOFF:
           for (j = 0; j < POLYMAX; j++) {
-            if (voice[j].channel == ch &&
-                voice[j].note == tseqt->data[1]) {
+            if (voice[j].channel == ch && voice[j].note == tseqt->data[1] &&
+                voice[j].endstamp == NOTE_MAXLEN) {
               if (channel[ch].controller[CTL_SUSTAIN] >= 64) {
                 voice[j].sustain = 1;
                 continue;
               }
-              voice[j].samples = samplepos - voice[j].timestamp +
-                voice[j].env.r;
+              voice[j].endstamp = samplepos + voice[j].env.r;
               if (voice[j].s.sampleModes != 1) {
                 voice[j].s.sampleModes = 0;  // tell voice to finish past loop
               }
-              break;
             }
           }
           break;
@@ -364,14 +381,20 @@ void fill_audio(void *udata, Uint8 *stream, int len)
           /* find an empty voice to use for note start */
           pgm = POLYMAX;
           for (j = 0; j < POLYMAX; j++) {
-            if (voice[j].channel == ch && voice[j].note == tseqt->data[1]) {
-              pgm = j;
-              break;  // steal note already playing on same channel
+            if (voice[j].channel == ch && voice[j].note == tseqt->data[1] &&
+                voice[j].endstamp == NOTE_MAXLEN) {
+              /* stop any existing playing voice on the same note/chan */
+              voice[j].endstamp = samplepos + voice[j].env.r;
+              if (voice[j].s.sampleModes != 1) {
+                voice[j].s.sampleModes = 0;  // tell voice to finish past loop
+              }
             }
-            if (voice[j].samples <= 0) {
+            if (voice[j].endstamp < samplepos) {
               pgm = j;
             }
           }
+          if (j < 0)
+            break;
           j = pgm;
           if (j >= POLYMAX) {  /* steal oldest voice if none free */
             Uint64 oldest = ~0;
@@ -387,8 +410,9 @@ void fill_audio(void *udata, Uint8 *stream, int len)
           if (j < POLYMAX) {
             memset(&voice[j], 0, sizeof(voice[j]));
             voice[j].note = tseqt->data[1];
-            voice[j].f = note_to_freq(voice[j].note, 100);
+            voice[j].f = note_to_freq(voice[j].note, 100, ch);
             voice[j].r = 2 * M_PI * voice[j].f / rate;
+            voice[j].vel = tseqt->data[2];
             voice[j].v = (float)tseqt->data[2] / 128.0;
             voice[j].t = 0.0;
             voice[j].env.a = cents_to_freqmult(-12000, 1, 1) * rate;
@@ -398,13 +422,13 @@ void fill_audio(void *udata, Uint8 *stream, int len)
             voice[j].env.r = voice[j].env.a;
             voice[j].pan = (float)channel[ch].controller[CTL_PAN] / 127.0;
             voice[j].channel = ch;
-            voice[j].samples = 0x7fffffff;  // set at noteoff event
+            voice[j].endstamp = NOTE_MAXLEN;  // set at noteoff event
             voice[j].timestamp = samplepos;
             voice[j].inst = -1;  // not found
             voice[j].shdr = -1;  // not found
             if (sf2.shdr) {
               int p, zone, bank, count, range, velrange;
-              int vel = (int)(127.0 * voice[j].v);
+              int vel = voice[j].vel;
               pgm = channel[ch].program;
               bank = channel[ch].controller[CTL_BANK_SELECT];
               bank <<= 7;
@@ -528,12 +552,12 @@ void fill_audio(void *udata, Uint8 *stream, int len)
               }
               if (voice[j].shdr < 0) {
                 /* failed to find suitable sampleID, free voice */
-                voice[j].samples = 0;
+                voice[j].endstamp = 0;
               }
             } else {
               if (ISPERC(ch)) {
                 /* kill percussion for non-sf2 voice */
-                voice[j].samples = 0;
+                voice[j].endstamp = 0;
               }
               voice[j].env.r = rate/16;
               voice[j].env.d = rate/16;
@@ -562,8 +586,7 @@ void fill_audio(void *udata, Uint8 *stream, int len)
             for (j = 0; j < POLYMAX; j++) {
               if (voice[j].channel == ch && voice[j].sustain) {
                 voice[j].sustain = 0;
-                voice[j].samples = samplepos - voice[j].timestamp +
-                  voice[j].env.r;
+                voice[j].endstamp = samplepos + voice[j].env.r;
                 if (voice[j].s.sampleModes != 1) {
                   voice[j].s.sampleModes = 0;  // finish past loop
                 }
@@ -596,12 +619,12 @@ void fill_audio(void *udata, Uint8 *stream, int len)
     for (j = voices = 0; j < POLYMAX; j++) {
       float sample, t;
       int tpos, rpos;
-      if (voice[j].samples == 0) {
+      if (voice[j].endstamp <= samplepos) {
         continue;
       }
       voices++;
       tpos = samplepos - voice[j].timestamp;  // sample # since attack start
-      rpos = voice[j].timestamp + voice[j].samples - samplepos; // release pos
+      rpos = voice[j].endstamp - samplepos; // release pos
       t = voice[j].t;  // each voice has its own timebase
       if (tpos < voice[j].env.a) {
         // attack phase
@@ -619,7 +642,7 @@ void fill_audio(void *udata, Uint8 *stream, int len)
         // sustain phase
         vmod = voice[j].env.s;
         if (vmod <= 0.000001) {  // kill voice when it can't be heard anymore
-          voice[j].samples = 0;
+          voice[j].endstamp = 0;
         }
       }
       if (rpos < voice[j].env.r) {
@@ -646,7 +669,7 @@ void fill_audio(void *udata, Uint8 *stream, int len)
           t = voice[j].s.dwStartloop - voice[j].s.dwStart;
         }
         if (t + voice[j].s.dwStart >= voice[j].s.dwEnd) {
-          voice[j].samples = 0;  // kill off voice when completely played
+          voice[j].endstamp = 0;  // kill off voice when completely played
         }
       }
       if (pgm <= -1) { // sine
@@ -693,6 +716,7 @@ void fill_audio(void *udata, Uint8 *stream, int len)
         sample *= (1.0 / 32767.0);
       }
       sample *= voice[j].v * vmod;
+      /* if active voices are panned, hit target position over one second */
       if (voice[j].pan < (float)channel[ch].controller[CTL_PAN] / 127.0) {
         float delta = (float)channel[ch].controller[CTL_PAN] / 127.0 -
                       voice[j].pan;
@@ -708,25 +732,52 @@ void fill_audio(void *udata, Uint8 *stream, int len)
       t += voice[j].r * channel[ch].bender_mult *
         (channel[ch].mod_mult * lfo + 1.0);
       voice[j].t = t;  // save in per-voice timebase
-      if (rpos <= 1) {
-        voice[j].samples = 0;
-        voice[j].timestamp = ~0;
-      }
     }
-    /* limit samples to range from -1.0 to 1.0 */
-    if (abs(left * normalize) > 0.9 || abs(right * normalize) > 0.9) {
-      if (abs(left) > abs(right)) {
-        normalize = 1.0 / abs(left);
-      } else {
-        normalize = 1.0 / abs(right);
-      }
-    }
-    left *= normalize;
-    right *= normalize;
     f32s[i * 2] = left;
     f32s[i * 2 + 1] = right;
     samplepos++;
+    if (fabs(left) > max_val) {
+      max_val = fabs(left);
+      nindex_max = i;
+    }
+    if (fabs(right) > max_val) {
+      max_val = fabs(right);
+      nindex_max = i;
+    }
   }
+  /*
+   * normalization pass:
+   *
+   * normalize will be the value used for the prior audio frame.
+   *
+   * A smooth transition is made from the old normalize value at the
+   * first sample to the sample offset with the maximum value in the
+   * current frame.  The new value persists until the last sample
+   * of the current frame.   This can leave an audible artifact if
+   * the max value is at the start of a given frame, but random chance
+   * should make that only a one in "len" chance
+   *
+   * this is a good tradeoff vs always having output that is too quiet
+   * because of the headroom reserved for hundreds of voices going.
+   */
+  if (max_val < 1.0) {
+    max_val = 1.0;  /* don't apply any gain to very quiet sections */
+  }
+  if (max_val > 0.0) { /* should always be true in normal operation */
+    float normalize_old = normalize;
+    float normalize_diff = (1.0 / max_val) - normalize_old;
+    for (i = 0; i < len; i++) {
+      if (i < nindex_max) {
+        normalize = normalize_old +
+                normalize_diff * (float)i / (float)nindex_max;
+      } else {
+        normalize = 1.0 / max_val;
+      }
+      f32s[i * 2] *= normalize;
+      f32s[i * 2 + 1] *= normalize;
+    }
+  }
+
 }
 
 void save_audio(char *filename)
@@ -818,45 +869,172 @@ void stop_sdl_dev(void)
   SDL_PauseAudioDevice(sdl_dev, 1);  /* stop filling audio buffer */
 }
 
+
+struct sysex_stuff {
+  int bytes; // minimum bytes needed to dispatch handler
+  void (*handler)(Uint8 *);  // soft handler
+  Uint32 match; // big endian data to match
+  Uint32 mask;  // big endian mask to apply before match
+};
+
+static void sys_gm1_on(Uint8 *data) { seq_reset(1); }
+static void sys_gm2_on(Uint8 *data) { seq_reset(1); }
+static void sys_master_v(Uint8 *data) { /* no-op for now */ }
+
+static void sys_master_ft(Uint8 *data)
+{
+  int bend = data[1];
+  bend <<= 7;
+  bend |= data[0];
+  atune = 440 * pitchbend_to_freqmult(bend, 1);
+}
+
+static void sys_master_ct(Uint8 *data)
+{
+  int cents = data[1];
+  cents -= 64;
+  cents *= 100;
+  atune = 440 * cents_to_freqmult(cents, 1, 1);
+}
+
+static void sys_scale_tune(Uint8 *data)
+{
+  int note, ch, chmask;
+  chmask = *data++;
+  chmask <<= 7;
+  chmask |= *data++;
+  chmask <<= 7;
+  chmask |= *data++;
+  for (note = 0; note < 12; note++) {
+    int cents;
+    float f;
+    cents = *data++;
+    cents -= 64;
+    f = cents_to_freqmult(cents, 1, 1);
+    for (ch = 0; ch < 16; ch++) {
+      if (chmask & (1<<ch)) {
+        scaletune[ch][note] = f;
+      }
+    }
+  }
+}
+
+static void sys_scale_tune2(Uint8 *data)
+{
+  int note, ch, chmask;
+  chmask = *data++;
+  chmask <<= 7;
+  chmask |= *data++;
+  chmask <<= 7;
+  chmask |= *data++;
+  for (note = 0; note < 12; note++) {
+    int bend;
+    float f;
+    bend = *data++;
+    bend <<= 7;
+    bend |= *data++;
+    f = pitchbend_to_freqmult(bend, 1);
+    for (ch = 0; ch < 16; ch++) {
+      if (chmask & (1<<ch)) {
+        scaletune[ch][note] = f;
+      }
+    }
+  }
+}
+
+/* fixme?: this is buggy if done 2x before new notes start */
+/* but this is faster than recalculating all sf2 mods */
+/* it's still rare to find any midi file with this message */
+static void realtime_tune(void)
+{
+  int j;
+  for (j = 0; j < POLYMAX; j++) {
+    int note = voice[j].note;
+    int ch = voice[j].channel;
+    voice[j].r *= scaletune[ch][note % 12];
+  }
+}
+
+static void sys_scale_tuner(Uint8 *data)
+{
+  sys_scale_tune(data);
+  realtime_tune();
+}
+
+static void sys_scale_tune2r(Uint8 *data)
+{
+  sys_scale_tune2(data);
+  realtime_tune();
+}
+
+/* parse roland gs patch part parameters (M-GS64/VE-GS Pro) */
+static void sys_gs_dt1(Uint8 *data)
+{
+  if (data[0] == 0x40 && (data[1] & 0xf0) == 0x10 && data[2] == 0x15) {
+    /* USE RHYTHM PART */
+    int part = data[1] & 0xf;
+    int mode = data[3] & 0x3;
+    if (mode) {
+      perc |= (1 << part);
+    } else {
+      perc &= ~(1 << part);
+    }
+  }
+  if (!(data[0] & ~0x40) && data[1] == 0x00 && data[2] == 0x7f) {
+    /* GS RESET or SYSTEM MODE SET */
+    seq_reset(1);
+  }
+  if (data[0] == 0x40 && (data[1] & 0xf0) == 0x10 &&
+      data[2] >= 0x40 && data[2] <= 0x4b) {
+    /* GS SCALE TUNING NOTE N (0x40(0) - 0x4B(11)) */
+    int ch = data[1] & 0xf;
+    int note = data[2] - 0x40;
+    int cents;
+    /* convert from roland block number to midi part number 0-15 */
+    ch = ch == 0 ? 9 : ch < 10 ? ch - 1 : ch;
+    data += 3;
+    while (data[2] != 0xf7 && note < 12) {
+      cents = *data++;
+      cents -= 64;
+      scaletune[ch][note++] = cents_to_freqmult(cents, 1, 1);
+    }
+  }
+}
+
+/* fixme: realtime treated as non-realtime for now */
+struct sysex_stuff sysex[] = {
+ { 8, sys_gs_dt1, 0x41004212, 0xff00ffff },
+ { 4, sys_gm1_on, 0x7e7f0901, 0xffffffff },
+ { 4, sys_gm2_on, 0x7e7f0903, 0xffffffff },
+ { 4, sys_master_v, 0x7f7f0401, 0xffffffff },
+ { 6, sys_master_ft, 0x7f7f0403, 0xffffffff },
+ { 6, sys_master_ct, 0x7f7f0404, 0xffffffff },
+ { 19, sys_scale_tuner,  0x7f7f0808, 0xffffffff }, /*realtime*/
+ { 19, sys_scale_tune,   0x7e7f0808, 0xffffffff },
+ { 31, sys_scale_tune2r, 0x7f7f0809, 0xffffffff }, /*realtime*/
+ { 31, sys_scale_tune2,  0x7e7f0809, 0xffffffff },
+ { 0, NULL, 0, 0 },  // terminal record
+};
+
 void load_sysex(int length, Uint8 *data, int type)
 {
-    unsigned long int i;
+  int i;
 
-    /*
-     * If the system exclusive is for roland, evaluate it.  More than
-     * roland could be evaluated here if i had documentation.  Please
-     * submit patches for any other hardware to laredo@gnu.org
-     * Complete emulation of all GS sysex messages in the works....
-     */
-    if (length > 7 && data[0] == 0x41 && data[2] == 0x42 && data[3] == 0x12) {
-	/* GS DATA SET MESSAGES */
-	if (data[4] == 0x40 && (data[5] & 0xf0) == 0x10 && data[6] == 0x15) {
-		/* USE RHYTHM PART */
-		if (!(i = (data[5] & 0xf)))
-		    i = 0x09;
-		else if (i < 10)
-		    i--;
-		i = 1<<i;
-		if (data[7])
-		    perc |= i;
-		else
-		    perc &= ~i;
-	}
-	if ((data[4] == 0x40 || data[4] == 0) &&
-	    data[5] == 0x00 && data[6] == 0x7f) { /* GS RESET */
-		perc = 0x0200;	/* percussion in channel 10 only */
-		for (i = 0; i < 16; i++) {	/* set state info */
-		    channel[i].bender = 8192;
-		    channel[i].bender_range = 2;
-		    channel[i].controller[CTL_PAN] = 64;
-		    channel[i].controller[CTL_SUSTAIN] = 0;
-    		}
-	}
+  for (i = 0; sysex[i].handler; i++) {
+    Uint32 match = SDL_SwapBE32(sysex[i].match);
+    Uint32 mask = SDL_SwapBE32(sysex[i].mask);
+    if (length < sysex[i].bytes) {
+      // ignore messages not long enough for handler
+      continue;
     }
-    if (!play_ext)
-	return;
-    // send sysex to external midi device
-    midi_send_sysex(length, data, type);
+    if ((*(Uint32 *)data & mask) == match) {
+      sysex[i].handler(data + 4);
+    }
+  }
+  if (!play_ext)
+      return;
+  // send sysex to external midi device
+  midi_send_sysex(length, data, type);
 }
 
 /* MT-32 emulation translate table */
@@ -951,13 +1129,15 @@ void seq_bender(int chn, int p1, int p2)
   tseqh = add_pkt(tseqh);
 }
 
-void seq_reset(void)
+void seq_reset(int keep_queue)
 {
   int i;
+  if (!keep_queue) {
+    tseqh = tseqt = tseq;
+  }
   /* kill all playing voices */
-  tseqh = tseqt = tseq;
   for (i = 0; i < POLYMAX; i++) {
-    voice[i].samples = 0;
+    voice[i].endstamp = 0;
   }
   /* to keep midi in sync with soft synth, initialize both here */
   if (play_ext != chanmask) {
@@ -971,18 +1151,24 @@ void seq_reset(void)
     /* if sdl_dev opend, start sdl audio to be in sync with external midi */
     start_sdl_dev();
   }
+  atune = 440.0; /* reset any master tune overrides in effect */
   for (i = 0; i < 16; i++) {	/* set state info */
-      channel[i].bender_mult = 1.0;
-      channel[i].bender = 8192;
-      channel[i].bender_range = 2;
-      channel[i].controller[CTL_PAN] = 64;
-      channel[i].controller[CTL_SUSTAIN] = 0;
-      channel[i].controller[CTL_EXPRESSION] = 127;
-      seq_control(i, CTL_ALL_NOTES_OFF, 0);
-      seq_control(i, CTL_ALL_SOUNDS_OFF, 0);
-      seq_control(i, CTL_RESET_ALL_CONTROLLERS,0);
-      seq_control(i, CTL_BANK_SELECT, 0);
-      seq_control(i, CTL_BANK_SELECT + CTL_LSB, 0);
-      seq_set_patch(i, 0);
+    int j;
+    /* reset scale tuning to default */
+    for (j = 0; j < 12; j++) {
+      scaletune[i][j] = 1.0;
+    }
+    channel[i].bender_mult = 1.0;
+    channel[i].bender = 8192;
+    channel[i].bender_range = 2;
+    seq_control(i, CTL_PAN, 64);
+    seq_control(i, CTL_SUSTAIN, 0);
+    seq_control(i, CTL_EXPRESSION, 127);
+    seq_control(i, CTL_ALL_NOTES_OFF, 0);
+    seq_control(i, CTL_ALL_SOUNDS_OFF, 0);
+    seq_control(i, CTL_RESET_ALL_CONTROLLERS,0);
+    seq_control(i, CTL_BANK_SELECT, 0);
+    seq_control(i, CTL_BANK_SELECT + CTL_LSB, 0);
+    seq_set_patch(i, 0);
   }
 }
