@@ -1,7 +1,9 @@
 # playmidi
 Playmidi is a web and curses and SDL-based MIDI file player for Linux and MacOS and Chrome (via Web MIDI and Web Audio apis).
 
-[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/ZviJcNXnBZo/0.jpg)](https://www.youtube.com/watch?v=ZviJcNXnBZo)
+Play Roland Integra-7 demo, Wormhole (from Roland 1993):
+
+[![Roland Integra-7 demo, Wormhole (from Roland 1993)](https://img.youtube.com/vi/ZviJcNXnBZo/mqdefault.jpg)](https://www.youtube.com/watch?v=ZviJcNXnBZo)
 
 It supports software rendering of midi files via SDL audio and can also output midi events to external midi devices (in time with SDL audio soft synth) via both alsa sequencer api (linux) and coremidi api (osx).
 
