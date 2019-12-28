@@ -10,3 +10,5 @@ It supports software rendering of midi files via SDL audio and can also output m
 Math-based synthesis (when no sf2 is loaded and no external midi output is set) is planned to evolve over time to support most of the features found in a minimoog voyager, and wavetable based sf2 support is expected to evolve to properly emulate all the features of a roland sc88 (but not there yet).
 
 Not all sf2 files are yet fully supported, but currently most development in the git tree has happened with one you can find via google search called Scc1t2.sf2. It provides a good starting point for those without external midi hardware
+
+[Discord](https://discord.gg/EUfcrzb)
