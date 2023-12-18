@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <signal.h>
 
+#include "debugbreak.h"
+
 struct sfSFBK sf2;  /* pointers to everything loaded go here */
 extern int verbose;
 
@@ -131,8 +133,8 @@ int main(int argc, char **argv)
 {
   if (argc > 1) {
     load_sf2(argv[1]);
-    signal (SIGTRAP, SIG_IGN); // if not debugging, ignore the int3
-    asm volatile ("int3");
+    signal (SIGTRAP, SIG_IGN); // if not debugging, ignore the break
+    debug_break();
   }
   exit(0);
 }
