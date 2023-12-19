@@ -13,6 +13,8 @@
 #include <stdio.h>
 #include <signal.h>
 
+#include "debugbreak.h"
+
 /* parse dump from 0xf0 to 0xf7, return pointer to just after last byte */
 /*
   patches: 0c 00 01
@@ -97,8 +99,8 @@ int main(int argc, char **argv)
 {
   if (argc > 1) {
     load_dump(argv[1]);
-    //signal (SIGTRAP, SIG_IGN); // if not debugging, ignore the int3
-    //asm volatile ("int3");
+    //signal (SIGTRAP, SIG_IGN); // if not debugging, ignore the break
+    //debug_break();
   }
   exit(0);
 }
